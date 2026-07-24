@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Mô hình 3D — Bố trí nội thất</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root{
+    --ink:#0E1113; --panel:#151A1D; --line:#262E33;
+    --fg:#E7EAEC; --mut:#8D979D; --dim:#FF2BD1; --warm:#D98A3C;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--ink);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  #stage{position:fixed;inset:0}
+  canvas{display:block;touch-action:none}
+
+  /* ---- overlay labels ---- */
+  #labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  .lbl{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;
+    font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+    color:#fff;background:rgba(14,17,19,.72);border:1px solid var(--line);
+    padding:3px 7px;border-radius:2px;backdrop-filter:blur(4px)}
+  .lbl b{font-weight:600}
+  .lbl span{color:var(--mut);font-variant-numeric:tabular-nums;margin-left:6px}
+
+  /* ---- panel ---- */
+  #panel{position:fixed;left:0;right:0;bottom:0;background:var(--panel);
+    border-top:1px solid var(--line);max-height:62vh;display:flex;flex-direction:column}
+  #grip{padding:9px 14px 7px;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+  #grip .bar{width:32px;height:3px;border-radius:2px;background:#39434A}
+  #grip h1{margin:0;font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+  #grip .meta{margin-left:auto;font-size:10px;color:var(--mut);font-variant-numeric:tabular-nums}
+  #body{overflow-y:auto;padding:0 14px 16px;-webkit-overflow-scrolling:touch}
+  #panel.min #body{display:none}
+
+  .row{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  button.chip{appearance:none;border:1px solid var(--line);background:#1B2226;color:var(--fg);
+    font:inherit;font-size:11.5px;padding:7px 11px;border-radius:2px;cursor:pointer}
+  button.chip:hover{border-color:#3B464D}
+  button.chip[aria-pressed="true"]{background:var(--fg);color:var(--ink);border-color:var(--fg)}
+  button.chip:focus-visible{outline:2px solid var(--dim);outline-offset:2px}
+
+  .cap{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);
+    margin:14px 0 2px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+
+  .slider{display:flex;align-items:center;gap:10px;margin:10px 0}
+  .slider label{font-size:11.5px;color:var(--mut);min-width:104px}
+  .slider input{flex:1;accent-color:var(--dim);height:22px}
+  .slider output{font-size:12px;font-variant-numeric:tabular-nums;min-width:52px;text-align:right}
+
+  table{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums}
+  th{text-align:left;font-weight:500;color:var(--mut);font-size:9.5px;letter-spacing:.12em;
+    text-transform:uppercase;padding:7px 0;border-bottom:1px solid var(--line)}
+  td{padding:6px 0;border-bottom:1px solid #1C2225}
+  td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){text-align:right}
+  tr.sum td{border-bottom:none;padding-top:9px;font-weight:600}
+  tr.sum td:first-child{color:var(--mut);font-weight:400}
+
+  .note{font-size:11px;line-height:1.65;color:var(--mut);margin:8px 0 0}
+  .note b{color:var(--fg);font-weight:500}
+  .note code{color:var(--dim);font-size:10.5px}
+
+  #hint{position:fixed;top:12px;left:50%;transform:translateX(-50%);font-size:10.5px;
+    color:var(--mut);background:rgba(14,17,19,.7);padding:5px 11px;border-radius:2px;
+    border:1px solid var(--line);transition:opacity .5s;pointer-events:none}
+
+  @media (min-width:820px){
+    #panel{left:auto;top:0;width:340px;max-height:none;border-top:none;border-left:1px solid var(--line)}
+    #grip{cursor:default}#grip .bar{display:none}
+    #panel.min #body{display:block}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+<div id="hint">Kéo để xoay · 2 ngón để phóng to</div>
+
+<div id="panel" class="min">
+  <div id="grip">
+    <div class="bar"></div>
+    <h1>Bố trí nội thất — 3D</h1>
+    <div class="meta" id="meta">66,8 m² xây dựng</div>
+  </div>
+  <div id="body">
+
+    <div class="cap">Góc nhìn</div>
+    <div class="row" id="views"></div>
+
+    <div class="cap">Hiển thị</div>
+    <div class="row" id="toggles"></div>
+
+    <div class="slider">
+      <label for="hgt">Chiều cao trần</label>
+      <input id="hgt" type="range" min="240" max="360" step="5" value="300">
+      <output id="hgtv">3,00 m</output>
+    </div>
+    <div class="slider">
+      <label for="cut">Cắt ngang tường</label>
+      <input id="cut" type="range" min="20" max="100" step="1" value="45">
+      <output id="cutv">1,35 m</output>
+    </div>
+
+    <div class="cap">Diện tích thông thuỷ</div>
+    <table>
+      <thead><tr><th>Không gian</th><th>Kích thước</th><th>m²</th></tr></thead>
+      <tbody id="rooms"></tbody>
+    </table>
+
+    <div class="cap">Số liệu lấy từ bản vẽ</div>
+    <p class="note">
+      Tỉ lệ được hiệu chuẩn bằng hai đường ghi kích thước gốc (<code>70</code> và <code>45</code>),
+      kiểm chứng lại bằng cửa kính lùa: khoảng hở trong tường đo được đúng <b>210 cm</b>.
+      Sai số dưới 1 %.<br><br>
+      <b>Đọc trực tiếp từ bản vẽ:</b> tường 200 và 140 mm · cửa vào 112 ·
+      cửa kính lùa 210×212 · cửa kính lật 70×149 · cửa phòng ngủ 75 · cửa WC 70 ·
+      giường 200×140 · tủ áo P1 182×58, P2 60×140 · bàn ăn 147×80 · kệ bếp sâu 60 ·
+      tủ giày 150×20 · hộp kỹ thuật 54×36.<br><br>
+      <b>Đang giả định</b> (bản vẽ không ghi): cao trần 3,00 m · cửa đi cao 2,20 m ·
+      bệ cửa sổ 0,90 m, cửa sổ cao 1,50 m · mặt bếp cao 0,85 m · tủ bếp trên cao 0,70 m.
+      Chỉnh cao trần bằng thanh trượt ở trên. Tường đang cắt ngang ở <b>1,35 m</b> cho dễ nhìn
+      xuống từng phòng — kéo thanh "Cắt ngang tường" lên 100 % để dựng tường đầy đủ.
+    </p>
+
+    <div class="cap">Cần xác nhận</div>
+    <p class="note">
+      <b>Đã chốt:</b> cửa vào ở tường tây, ô dưới cùng, rộng <b>1,12 m</b> — mở thẳng vào
+      phòng khách, ngay cạnh tủ giày. Phòng giữa là <b>WC</b> 1,46×2,48 m.
+      Ô vuông gạch chéo là <b>hộp kỹ thuật</b> 54×36 cm trong góc WC, chạy suốt chiều cao.<br><br>
+      Thiết bị vệ sinh <b>không có trên bản vẽ</b> — tôi đặt tạm bồn cầu, lavabo và khu tắm
+      theo vị trí hợp lý với cửa và ô thoáng. Tắt bằng nút "Thiết bị WC" nếu bạn có phương án riêng.<br><br>
+      Còn lại duy nhất: <b>cao trần</b>, đang để 3,00 m.
+    </p>
+
+    <div class="row" style="margin-top:16px">
+      <button class="chip" id="obj">Tải mô hình .obj</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   DỮ LIỆU — toàn bộ đơn vị cm, gốc toạ độ ở góc trên-trái mặt bằng
+   x tăng sang phải (đông), z tăng xuống dưới (nam)
+   ============================================================ */
+const PW = 937, PD = 775;          // bao ngoài mặt bằng
+let   H  = 300;                    // cao trần (thay đổi được)
+let   CUT = 135;                   // cao độ cắt ngang tường (kiểu nhà lửng)
+
+const WALLS = [
+  // {x0,z0,x1,z1, axis, op:[[a,b,sill,height],...]}
+  {x0:0,  z0:0,   x1:797, z1:20,  axis:'x', op:[[115,265,90,150],[330,388,120,100],[530,680,90,150]]},
+  {x0:0,  z0:0,   x1:20,  z1:775, axis:'z', op:[[150,270,90,150],[435,556,90,150],[586,699,0,220]]},
+  {x0:783,z0:0,   x1:797, z1:775, axis:'z', op:[[126,274,90,150],[415,484,90,149],[499,709,0,212]]},
+  {x0:0,  z0:755, x1:783, z1:775, axis:'x', op:[]},
+  {x0:298,z0:20,  x1:312, z1:400, axis:'z', op:[[292,366,0,220]]},
+  {x0:458,z0:20,  x1:472, z1:400, axis:'z', op:[[292,366,0,220]]},
+  {x0:298,z0:268, x1:472, z1:282, axis:'x', op:[[325,394,0,220]]},
+  {x0:0,  z0:400, x1:783, z1:414, axis:'x', op:[[312,458,0,240]]},
+  {x0:783,z0:400, x1:937, z1:414, axis:'x', op:[], h:70},
+  {x0:923,z0:414, x1:937, z1:775, axis:'z', op:[], h:70},
+  {x0:783,z0:761, x1:937, z1:775, axis:'x', op:[], h:70},
+];
+
+const ROOMS = [
+  {n:'Phòng ngủ 1',  x:20, z:20,  w:278, d:380, f:'wood'},
+  {n:'Phòng ngủ 2',  x:472,z:20,  w:311, d:380, f:'wood'},
+  {n:'WC',           x:312,z:20,  w:146, d:248, f:'tile'},
+  {n:'Sảnh',         x:312,z:282, w:146, d:118, f:'tile'},
+  {n:'Khách · Bếp · Ăn', x:20,z:414, w:763, d:341, f:'wood'},
+  {n:'Logia',        x:797,z:414, w:126, d:347, f:'tile'},
+];
+
+const F = [];  // nội thất
+const push = (o)=>F.push(o);
+// — phòng ngủ 1
+push({t:'bed',  x:70, z:30,  w:200,d:140,head:'w', n:'Giường P1'});
+push({t:'box',  x:21, z:342, w:182,d:58, h:220, c:'joinery', n:'Tủ áo P1'});
+push({t:'box',  x:22, z:79,  w:40, d:38, h:45,  c:'metal',   n:'Két sắt'});
+// — phòng ngủ 2
+push({t:'bed',  x:577,z:29,  w:200,d:140,head:'e', n:'Giường P2'});
+push({t:'box',  x:472,z:26,  w:60, d:140,h:220, c:'joinery', n:'Tủ áo P2'});
+// — phòng khách
+push({t:'box',  x:26, z:415, w:129,d:61, h:127, c:'joinery', n:'Tủ thờ'});
+push({t:'sofa', x:161,z:415, w:171,d:61, n:'Sofa'});
+push({t:'box',  x:195,z:494, w:92, d:46, h:42,  c:'joinery', n:'Bàn trà'});
+push({t:'box',  x:311,z:487, w:24, d:32, h:42,  c:'joinery'});
+push({t:'box',  x:310,z:537, w:24, d:32, h:42,  c:'joinery'});
+push({t:'box',  x:143,z:735, w:150,d:20, h:40,  c:'joinery', n:'Tủ giày · kệ TV'});
+push({t:'box',  x:163,z:748, w:110,d:6,  h:64, y:100, c:'screen'});
+// — bếp
+push({t:'box',  x:458,z:418, w:65, d:65, h:150, c:'metal',  n:'Tủ lạnh'});
+push({t:'box',  x:523,z:418, w:229,d:60, h:85,  c:'counter',n:'Kệ bếp'});
+push({t:'box',  x:458,z:418, w:325,d:38, h:53, y:150, c:'counter'});
+push({t:'sink', x:541,z:428, w:80, d:44});
+push({t:'hob',  x:670,z:428, w:74, d:46});
+// — bàn ăn
+push({t:'box',  x:578,z:560, w:140,d:75, h:75,  c:'wood2', n:'Bàn ăn 6'});
+for(let i=0;i<3;i++){
+  push({t:'chair', x:592+i*44, z:520, w:42, d:42});
+  push({t:'chair', x:592+i*44, z:640, w:42, d:42});
+}
+// — logia
+push({t:'box',  x:823,z:690, w:65, d:62, h:85, c:'metal', n:'Máy giặt'});
+
+// thiết bị WC — bản vẽ không thể hiện, đây là đề xuất, tắt/bật được
+const WC = [
+  {t:'box', x:388,z:150, w:70, d:40, h:40, c:'wall'},                 // bồn cầu
+  {t:'box', x:441,z:150, w:17, d:40, h:78, c:'wall'},                 // két nước
+  {t:'box', x:312,z:60,  w:50, d:45, h:12, y:80, c:'wall', n:'Lavabo'},
+  {t:'box', x:312,z:60,  w:12, d:45, h:70, c:'wall'},
+  {t:'box', x:312,z:190, w:146,d:58, h:2,  c:'tile', n:'Khu tắm'},
+  {t:'box', x:450,z:190, w:8,  d:8,  h:12, y:200, c:'metal'},
+];
+
+/* ============================================================
+   BỐI CẢNH 3D
+   ============================================================ */
+const m = v => v/100;                          // cm -> m
+const CX = PW/2, CZ = PD/2;                    // dời gốc về tâm
+const px = x => m(x-CX), pz = z => m(z-CZ);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0E1113);
+scene.fog = new THREE.Fog(0x0E1113, 22, 50);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, .1, 200);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('stage').appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x2a2622, .85));
+const sun = new THREE.DirectionalLight(0xfff2e0, 1.15);
+sun.position.set(7,12,5); sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+const s = 9; Object.assign(sun.shadow.camera,{left:-s,right:s,top:s,bottom:-s,near:.5,far:40});
+sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x93b7d8,.35); fill.position.set(-6,5,-7); scene.add(fill);
+
+const MAT = {
+  wall:    new THREE.MeshLambertMaterial({color:0xE9E5DC}),
+  wood:    new THREE.MeshLambertMaterial({color:0xB07C46}),
+  tile:    new THREE.MeshLambertMaterial({color:0xB9B6AE}),
+  joinery: new THREE.MeshLambertMaterial({color:0x9C5A22}),
+  wood2:   new THREE.MeshLambertMaterial({color:0x8A5A2E}),
+  metal:   new THREE.MeshLambertMaterial({color:0xC3C7CA}),
+  counter: new THREE.MeshLambertMaterial({color:0x4A4E52}),
+  screen:  new THREE.MeshLambertMaterial({color:0x14181B}),
+  fabric:  new THREE.MeshLambertMaterial({color:0x63736D}),
+  linen:   new THREE.MeshLambertMaterial({color:0xDCD5C6}),
+  glass:   new THREE.MeshLambertMaterial({color:0x8FC4D2,transparent:true,opacity:.3,side:THREE.DoubleSide}),
+  inox:    new THREE.MeshLambertMaterial({color:0xCFD6DA}),
+  pot:     new THREE.MeshLambertMaterial({color:0xA9633C}),
+  leaf:    new THREE.MeshLambertMaterial({color:0x4E7A44}),
+  leaf2:   new THREE.MeshLambertMaterial({color:0x66935A}),
+  stem:    new THREE.MeshLambertMaterial({color:0x5A4A34}),
+  base:    new THREE.MeshLambertMaterial({color:0x1A1F22}),
+};
+
+const gWalls = new THREE.Group(), gFurn = new THREE.Group(),
+      gGlass = new THREE.Group(), gDim = new THREE.Group(),
+      gWC = new THREE.Group();
+scene.add(gWalls, gFurn, gGlass, gDim, gWC);
+
+function box(g, x,z,w,d,h, y, mat){
+  if(w<=0||d<=0||h<=0) return null;
+  const geo = new THREE.BoxGeometry(m(w),m(h),m(d));
+  const me = new THREE.Mesh(geo, mat);
+  me.position.set(px(x)+m(w)/2, m(y)+m(h)/2, pz(z)+m(d)/2);
+  me.castShadow = me.receiveShadow = true;
+  g.add(me); return me;
+}
+
+/* ---------- tường + lỗ mở ---------- */
+function buildWalls(){
+  while(gWalls.children.length) gWalls.remove(gWalls.children[0]);
+  while(gGlass.children.length) gGlass.remove(gGlass.children[0]);
+
+  WALLS.forEach(W=>{
+    const along = W.axis==='x';
+    const A0 = along ? W.x0 : W.z0, A1 = along ? W.x1 : W.z1;
+    const T0 = along ? W.z0 : W.x0, T1 = along ? W.z1 : W.x1;
+    const th = T1-T0;
+    const WH = W.h || H;
+    const put = (a,b, y, h, mat) => {
+      if(b-a<=0.5) return;
+      const hh = Math.min(y+h, CUT) - y;            // xén theo mặt cắt
+      if(hh<=0.5) return;
+      along ? box(gWalls, a,T0, b-a, th, hh, y, mat)
+            : box(gWalls, T0,a, th, b-a, hh, y, mat);
+    };
+    const ops = W.op.slice().sort((p,q)=>p[0]-q[0]);
+    let cur = A0;
+    ops.forEach(([a,b,sill,oh])=>{
+      put(cur, a, 0, WH, MAT.wall);                // mảng đặc
+      put(a, b, 0, Math.max(0,sill), MAT.wall);    // bệ dưới
+      const top = sill+oh;
+      put(a, b, top, Math.max(0,WH-top), MAT.wall);// lanh tô
+      // kính
+      if((sill>0 || oh>215) && sill < CUT-1){
+        const gh = Math.min(sill+oh, CUT) - sill;
+        const gm = new THREE.Mesh(new THREE.BoxGeometry(
+          m(along?b-a:th), m(gh), m(along?th:b-a)), MAT.glass);
+        gm.position.set(
+          px(along?a:T0)+m(along?b-a:th)/2,
+          m(sill)+m(gh)/2,
+          pz(along?T0:a)+m(along?th:b-a)/2);
+        gGlass.add(gm);
+      }
+      cur = b;
+    });
+    put(cur, A1, 0, WH, MAT.wall);
+  });
+  box(gWalls, 404, 20, 54, 36, Math.min(H,CUT), 0, MAT.wall);  // ống kỹ thuật, góc WC
+  buildRailing();
+  buildSlider();
+}
+
+/* ---------- lan can inox trên tường lùn ban công ---------- */
+const RAIL = [                      // [xC, zC, chiều dài, trục]
+  [930, 414, 361, 'z'],
+  [783, 768, 147, 'x'],
+  [783, 407, 147, 'x'],
+];
+function buildRailing(){
+  const WT = 70, TOP = Math.min(110, CUT);
+  if(TOP - WT < 4) return;
+  RAIL.forEach(([x0,z0,len,axis])=>{
+    const alongZ = axis==='z';
+    // tay vịn trên
+    const r = new THREE.Mesh(new THREE.CylinderGeometry(m(2.2),m(2.2),m(len),10), MAT.inox);
+    r.position.set(px(alongZ?x0:x0+len/2), m(TOP), pz(alongZ?z0+len/2:z0));
+    if(alongZ) r.rotation.x = Math.PI/2; else r.rotation.z = Math.PI/2;
+    r.castShadow = true; gWalls.add(r);
+    // thanh đứng thưa
+    const n = Math.max(2, Math.round(len/13));
+    for(let i=0;i<=n;i++){
+      const t = len*i/n;
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(m(1),m(1),m(TOP-WT),8), MAT.inox);
+      b.position.set(px(alongZ?x0:x0+t), m((WT+TOP)/2), pz(alongZ?z0+t:z0));
+      b.castShadow = true; gWalls.add(b);
+    }
+  });
+}
+
+/* ---------- cửa lùa 2 cánh ra ban công ---------- */
+function buildSlider(){
+  const HH = Math.min(212, CUT), W = 105;
+  if(HH < 12) return;
+  [[499, 784], [604, 790]].forEach(([z,x])=>{
+    box(gWalls, x, z,      3, 5,   HH, 0, MAT.inox);      // đố đứng
+    box(gWalls, x, z+W-5,  3, 5,   HH, 0, MAT.inox);
+    box(gWalls, x, z+5,    3, W-10, 5, 0, MAT.inox);      // ngưỡng
+    if(HH > 210) box(gWalls, x, z+5, 3, W-10, 5, HH-5, MAT.inox);
+    box(gGlass, x+0.5, z+5, 2, W-10, HH-10, 5, MAT.glass);
+  });
+}
+
+/* ---------- sàn ---------- */
+function buildFloors(){
+  box(scene, -14,-14, PW+28, PD+28, 6, -6, MAT.base);
+  ROOMS.forEach(r=> box(scene, r.x-2, r.z-2, r.w+4, r.d+4, 3, 0, MAT[r.f]));
+}
+
+/* ---------- cây xanh ban công ---------- */
+const PLANTS = [[812,448,1.30],[901,472,0.85],[903,566,1.05],[812,604,0.72],[812,524,0.52]];
+function buildPlants(){
+  PLANTS.forEach(([x,z,s])=>{
+    const ph = 30*s, pr = 15*s, sh = 28*s;
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(m(pr),m(pr*.72),m(ph),14), MAT.pot);
+    pot.position.set(px(x), m(ph/2), pz(z)); pot.castShadow = true; gFurn.add(pot);
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(m(2*s),m(2.6*s),m(sh),8), MAT.stem);
+    st.position.set(px(x), m(ph+sh/2), pz(z)); gFurn.add(st);
+    [[0,0,25,17],[-13,9,17,4],[12,-9,15,3]].forEach(([dx,dz,r,dy],i)=>{
+      const f = new THREE.Mesh(new THREE.IcosahedronGeometry(m(r*s),1), i?MAT.leaf2:MAT.leaf);
+      f.position.set(px(x+dx*s), m(ph+sh+dy*s), pz(z+dz*s));
+      f.castShadow = true; gFurn.add(f);
+    });
+  });
+}
+
+/* ---------- nội thất ---------- */
+function buildFurniture(){
+  buildPlants();
+  WC.forEach(o=> box(gWC, o.x,o.z,o.w,o.d,o.h, o.y||0, MAT[o.c]||MAT.wall));
+  F.forEach(o=>{
+    if(o.t==='box'){ box(gFurn, o.x,o.z,o.w,o.d,o.h, o.y||0, MAT[o.c]||MAT.joinery); }
+
+    else if(o.t==='bed'){
+      box(gFurn, o.x, o.z, o.w, o.d, 32, 0, MAT.wood2);            // bệ
+      box(gFurn, o.x+4, o.z+4, o.w-8, o.d-8, 20, 32, MAT.linen);   // đệm
+      const hb = 8;
+      if(o.head==='w') box(gFurn, o.x-hb, o.z, hb, o.d, 95, 0, MAT.joinery);
+      else             box(gFurn, o.x+o.w, o.z, hb, o.d, 95, 0, MAT.joinery);
+      // gối
+      const pw=60, ph=40, gx = o.head==='w' ? o.x+8 : o.x+o.w-8-ph;
+      box(gFurn, gx, o.z+12, ph, pw, 12, 52, MAT.wall);
+      box(gFurn, gx, o.z+o.d-12-pw, ph, pw, 12, 52, MAT.wall);
+    }
+
+    else if(o.t==='sofa'){
+      box(gFurn, o.x, o.z, o.w, o.d, 38, 0, MAT.fabric);
+      box(gFurn, o.x, o.z, o.w, 16, 78, 0, MAT.fabric);            // lưng tựa
+      box(gFurn, o.x, o.z, 14, o.d, 58, 0, MAT.fabric);
+      box(gFurn, o.x+o.w-14, o.z, 14, o.d, 58, 0, MAT.fabric);
+    }
+
+    else if(o.t==='chair'){
+      box(gFurn, o.x, o.z, o.w, o.d, 44, 0, MAT.wood2);
+      box(gFurn, o.x, o.z, o.w, 6, 46, 44, MAT.wood2);
+    }
+
+    else if(o.t==='sink'){
+      box(gFurn, o.x, o.z, o.w, o.d, 4, 82, MAT.metal);
+      box(gFurn, o.x+6, o.z+6, o.w/2-8, o.d-12, 14, 70, MAT.metal);
+      box(gFurn, o.x+o.w/2+2, o.z+6, o.w/2-8, o.d-12, 14, 70, MAT.metal);
+      box(gFurn, o.x+o.w/2-2, o.z+2, 4, 4, 26, 86, MAT.metal);     // vòi
+    }
+
+    else if(o.t==='hob'){
+      box(gFurn, o.x, o.z, o.w, o.d, 3, 85, MAT.screen);
+      [[.28,.5],[.72,.5]].forEach(([u,v])=>{
+        const c = new THREE.Mesh(new THREE.CylinderGeometry(m(11),m(11),m(2),24), MAT.metal);
+        c.position.set(px(o.x+o.w*u), m(89), pz(o.z+o.d*v));
+        c.castShadow = true; gFurn.add(c);
+      });
+    }
+  });
+}
+
+/* ---------- ghi kích thước (theo ngôn ngữ bản vẽ gốc) ---------- */
+function buildDims(){
+  const mat = new THREE.LineBasicMaterial({color:0xFF2BD1});
+  const seg = (a,b)=>{
+    const g = new THREE.BufferGeometry().setFromPoints([a,b]);
+    gDim.add(new THREE.Line(g,mat));
+  };
+  const V = (x,y,z)=> new THREE.Vector3(px(x), m(y), pz(z));
+  ROOMS.forEach(r=>{
+    const y = 1;
+    const zc = r.z + r.d/2, xc = r.x + r.w/2;
+    seg(V(r.x+6,y,zc), V(r.x+r.w-6,y,zc));
+    seg(V(xc,y,r.z+6), V(xc,y,r.z+r.d-6));
+    [[r.x+6,zc],[r.x+r.w-6,zc]].forEach(([x,z])=>seg(V(x,y-8,z),V(x,y+8,z)));
+    [[xc,r.z+6],[xc,r.z+r.d-6]].forEach(([x,z])=>seg(V(x,y-8,z),V(x,y+8,z)));
+  });
+  gDim.visible = false;
+}
+
+buildFloors(); buildWalls(); buildFurniture(); buildDims();
+
+/* ============================================================
+   ĐIỀU KHIỂN CAMERA
+   ============================================================ */
+const target = new THREE.Vector3(0,1.1,0);
+let radius = 15, theta = -0.75, phi = 0.82;
+function apply(){
+  phi = Math.max(.08, Math.min(1.55, phi));
+  radius = Math.max(2.5, Math.min(42, radius));
+  camera.position.set(
+    target.x + radius*Math.sin(phi)*Math.sin(theta),
+    target.y + radius*Math.cos(phi),
+    target.z + radius*Math.sin(phi)*Math.cos(theta));
+  camera.lookAt(target);
+}
+apply();
+
+const el = renderer.domElement;
+let drag = null, hinted = false;
+const killHint = ()=>{ if(!hinted){hinted=true; document.getElementById('hint').style.opacity=0;} };
+
+el.addEventListener('pointerdown', e=>{
+  el.setPointerCapture(e.pointerId);
+  drag = {x:e.clientX, y:e.clientY, pan: e.button===2 || e.shiftKey};
+  killHint();
+});
+el.addEventListener('pointermove', e=>{
+  if(!drag) return;
+  const dx = e.clientX-drag.x, dy = e.clientY-drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if(drag.pan){
+    const r = new THREE.Vector3().subVectors(camera.position,target).length()*.0016;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
+    const up    = new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+    target.addScaledVector(right,-dx*r).addScaledVector(up, dy*r);
+  } else { theta -= dx*.006; phi -= dy*.006; }
+  apply();
+});
+['pointerup','pointercancel'].forEach(k=>el.addEventListener(k, ()=>drag=null));
+el.addEventListener('contextmenu', e=>e.preventDefault());
+el.addEventListener('wheel', e=>{ e.preventDefault(); radius *= 1+Math.sign(e.deltaY)*.11; apply(); killHint(); },{passive:false});
+
+let pinch = 0;
+el.addEventListener('touchstart', e=>{ if(e.touches.length===2){ drag=null; pinch = dist(e); } },{passive:true});
+el.addEventListener('touchmove', e=>{
+  if(e.touches.length===2){
+    e.preventDefault();
+    const d = dist(e); if(pinch) radius *= pinch/d; pinch = d; apply();
+  }
+},{passive:false});
+el.addEventListener('touchend', ()=>pinch=0);
+function dist(e){
+  const a=e.touches[0], b=e.touches[1];
+  return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+}
+
+/* ============================================================
+   NHÃN PHÒNG
+   ============================================================ */
+const labelBox = document.getElementById('labels');
+const labels = ROOMS.map(r=>{
+  const d = document.createElement('div'); d.className='lbl';
+  const a = (r.w*r.d/10000).toFixed(1).replace('.',',');
+  d.innerHTML = `<b>${r.n}</b><span>${a} m²</span>`;
+  labelBox.appendChild(d);
+  return {el:d, v:new THREE.Vector3(px(r.x+r.w/2), 1.4, pz(r.z+r.d/2))};
+});
+let showLabels = true;
+
+// điểm mốc: cửa vào
+[['↙ Cửa vào', 55, 642, 2.1]].forEach(([n,x,z,y])=>{
+  const d = document.createElement('div'); d.className='lbl';
+  d.innerHTML = `<b>${n}</b><span>1,12 m</span>`;
+  d.style.borderColor = '#FF2BD1';
+  labelBox.appendChild(d);
+  labels.push({el:d, v:new THREE.Vector3(px(x), y, pz(z))});
+});
+
+function drawLabels(){
+  labels.forEach(L=>{
+    if(!showLabels){ L.el.style.display='none'; return; }
+    const p = L.v.clone().project(camera);
+    const vis = p.z < 1;
+    L.el.style.display = vis ? 'block' : 'none';
+    if(!vis) return;
+    L.el.style.left = ((p.x*.5+.5)*innerWidth)+'px';
+    L.el.style.top  = ((-p.y*.5+.5)*innerHeight)+'px';
+  });
+}
+
+/* ============================================================
+   GIAO DIỆN
+   ============================================================ */
+const VIEWS = {
+  'Tổng thể':   [15,-0.75,0.82, 0,1.1,0],
+  'Mặt bằng':   [13,-0.001,0.10, 0,0,0],
+  'Từ cửa vào': [6.0,-1.35,1.35, -2.6,1.3,1.6],
+  'Phòng khách':[7.2,-2.5,1.20, -1.5,1.1,1.2],
+  'Bếp · ăn':   [6.6, 1.1,1.18,  2.2,1.1,1.6],
+  'Ngủ 1':      [5.6,-2.1,1.20, -3.2,1.1,-1.9],
+  'Ngủ 2':      [5.8, 0.9,1.20,  2.4,1.1,-1.9],
+};
+const vBox = document.getElementById('views');
+Object.keys(VIEWS).forEach((k,i)=>{
+  const b = document.createElement('button');
+  b.className='chip'; b.textContent=k; b.setAttribute('aria-pressed', i===0);
+  b.onclick = ()=>{
+    [...vBox.children].forEach(c=>c.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    const [r,t,p,tx,ty,tz] = VIEWS[k];
+    radius=r; theta=t; phi=p; target.set(tx,ty,tz); apply(); killHint();
+  };
+  vBox.appendChild(b);
+});
+
+const TOGGLES = [
+  ['Nội thất', true,  v=> gFurn.visible = v],
+  ['Thiết bị WC', true, v=> gWC.visible = v],
+  ['Kính',     true,  v=> gGlass.visible = v],
+  ['Tên phòng',true,  v=> showLabels = v],
+  ['Ghi kích thước', false, v=> gDim.visible = v],
+];
+const tBox = document.getElementById('toggles');
+TOGGLES.forEach(([name,init,fn])=>{
+  const b = document.createElement('button');
+  b.className='chip'; b.textContent=name; b.setAttribute('aria-pressed', init); fn(init);
+  b.onclick = ()=>{
+    const v = b.getAttribute('aria-pressed')!=='true';
+    b.setAttribute('aria-pressed', v); fn(v);
+  };
+  tBox.appendChild(b);
+});
+
+const hgt = document.getElementById('hgt'), hgtv = document.getElementById('hgtv');
+hgt.oninput = ()=>{
+  H = +hgt.value;
+  hgtv.textContent = (H/100).toFixed(2).replace('.',',')+' m';
+  applyCut();
+};
+const cut = document.getElementById('cut'), cutv = document.getElementById('cutv');
+function applyCut(){
+  CUT = Math.round(H * (+cut.value/100));
+  cutv.textContent = (CUT/100).toFixed(2).replace('.',',')+' m';
+  buildWalls();
+}
+cut.oninput = applyCut;
+
+// bảng diện tích
+const tb = document.getElementById('rooms');
+let tot = 0;
+ROOMS.forEach(r=>{
+  const a = r.w*r.d/10000; tot += a;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${r.n}</td><td>${(r.w/100).toFixed(2).replace('.',',')} × ${(r.d/100).toFixed(2).replace('.',',')}</td><td>${a.toFixed(1).replace('.',',')}</td>`;
+  tb.appendChild(tr);
+});
+const sum = document.createElement('tr'); sum.className='sum';
+sum.innerHTML = `<td>Tổng thông thuỷ</td><td></td><td>${tot.toFixed(1).replace('.',',')}</td>`;
+tb.appendChild(sum);
+
+// panel gập / mở
+const panel = document.getElementById('panel');
+document.getElementById('grip').onclick = ()=> panel.classList.toggle('min');
+
+/* ---------- xuất .obj ---------- */
+document.getElementById('obj').onclick = ()=>{
+  let v = [], f = [], n = 1;
+  scene.traverse(o=>{
+    if(!o.isMesh || !o.visible || o.material === MAT.glass) return;
+    o.updateMatrixWorld();
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    const base = n, p = new THREE.Vector3();
+    for(let i=0;i<pos.count;i++){
+      p.fromBufferAttribute(pos,i).applyMatrix4(o.matrixWorld);
+      v.push(`v ${p.x.toFixed(4)} ${p.y.toFixed(4)} ${p.z.toFixed(4)}`); n++;
+    }
+    const arr = idx ? idx.array : [...Array(pos.count).keys()];
+    for(let i=0;i<arr.length;i+=3)
+      f.push(`f ${base+arr[i]} ${base+arr[i+1]} ${base+arr[i+2]}`);
+  });
+  const txt = `# Bo tri noi that - mo hinh 3D\n# don vi: met\n${v.join('\n')}\n${f.join('\n')}\n`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
+  a.download = 'bo_tri_noi_that_3d.obj'; a.click();
+};
+
+/* ---------- vòng lặp ---------- */
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+(function loop(){
+  requestAnimationFrame(loop);
+  renderer.render(scene,camera);
+  drawLabels();
+})();
+applyCut();
+setTimeout(killHint, 6000);
+</script>
+</body>
+</html>
